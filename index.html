@@ -92,17 +92,9 @@ window.addEventListener('load', () => {
 
 		connectMM.addEventListener('click', async () => {
 			try {
-                //var socket = new WebSocket("ws://localhost:8080/echo");
 				const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
 				account = accounts[0];
 				mm.innerHTML = account;
-                // socket.onopen = function () {
-                //     output.innerHTML += "Status: Connected\n";
-                // };
-                // socket.onmessage = function (e) {
-                //     output.innerHTML += "Server: " + e.data + "\n";
-                // };
-                // socket.send(account);
 			} catch (error) {
 				console.log(error);
 			}
@@ -122,13 +114,7 @@ window.addEventListener('load', () => {
                 var socket = new WebSocket("ws://localhost:8080/echo");
 				const result = await contract.methods.changeOwner(newOwner.value).send({ from: account });
 				console.log(result);
-                socket.onopen = function () {
-                    output.innerHTML += "Status: Connected\n";
-                };
-                socket.onmessage = function (e) {
-                    output.innerHTML += "Server: " + e.data + "\n";
-                };
-                var message = 'blockNumber' + result.blockNumber + 'transactionHash' + result.transactionHash + 'newOwnerAdd' + result.to
+                var message = 'blockNumber' + result.blockNumber + 'transactionHash' + result.transactionHash + 'newOwnerAdd' + result.from
                 socket.send(message);
 				alert('Owner Changed!')
 			} catch (error) {
