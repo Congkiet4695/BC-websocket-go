@@ -3,111 +3,114 @@ package main
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"log"
-	"net/http"
-	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethclient"
 	_ "github.com/mattn/go-sqlite3"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+type Websocket struct {
+	*ethclient.Client
+	query ethereum.FilterQuery
 }
 
 type owner struct {
-	new_owner_address string
+	new_owner_address common.Address
 	transaction_hash  string
 	block_number      string
 	timestamp         int64
 }
 
-func main() {
+func Init() {
+	client, err := ethclient.Dial("wss://testnet-dex.binance.org/api/ws")
+	if err != nil {
+		log.Fatal(err)
+	}
+	websocket := &Websocket{Client: client, query: ethereum.FilterQuery{
+		Addresses: []common.Address{
+			common.HexToAddress("0x98b3f2219a2b7a047B6234c19926673ad4aac83A"),
+		},
+		Topics: [][]common.Hash{{
+			common.HexToHash("0x342827c97908e5e2f71151c08502a66d44b6f758e3ac2f1de95f02eb95f0a735"),
+		}},
+	}}
 
-	//Create DB
+	websocket.Connect()
+}
+
+func handleEvent(vLog types.Log) {
+	//sender := common.HexToAddress(vLog.Topics[1].Hex())
+	receiver := common.HexToAddress(vLog.Topics[2].Hex())
+	blockNumber := hexutil.EncodeUint64(vLog.BlockNumber)
+	transactionHash := vLog.TxHash.String()
+	//value := hexutil.Encode(vLog.Data)
+	now := time.Now().Unix()
+	//manual := false
+
+	o := owner{
+		new_owner_address: receiver,
+		transaction_hash:  transactionHash,
+		block_number:      blockNumber,
+		timestamp:         now,
+	}
+
 	db, _ := sql.Open("sqlite3", ".testnet.db")
 
-	stmt, _ := db.Prepare(`
-		CREATE TABLE IF NOT EXISTS "Owner" (
-			"new_owner_address"	TEXT,
-			"timestamp"	INTEGER,
-			"transaction_hash"	TEXT,
-			"block_number"	TEXT,
-			"id"	INTEGER NOT NULL,
-			PRIMARY KEY("id" AUTOINCREMENT)
-		);
-	`)
-	stmt.Exec()
+	err := insert(db, o)
+	if err != nil {
+		log.Printf("Insert owner failed with error %s", err)
+		return
+	}
 
-	http.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
-		conn, _ := upgrader.Upgrade(w, r, nil) // error ignored for sake of simplicity
+}
 
-		for {
-			// Read message from browser
-			msgType, msg, err := conn.ReadMessage()
-			if err != nil {
-				return
-			}
+func (websocket *Websocket) Connect() {
+	channel := make(chan types.Log)
 
-			// Print the message to the console
-			fmt.Printf("%s Data String: %s\n", conn.RemoteAddr(), string(msg))
+	sub, err := websocket.SubscribeFilterLogs(context.Background(), websocket.query, channel)
+	log.Printf("err: %+v", err)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-			// Write message back to browser
-			if err = conn.WriteMessage(msgType, msg); err != nil {
-				return
-			}
-
-			new_owner_address := getnewOwnerAddress(string(msg))
-			fmt.Printf("%s Address To: %s\n", conn.RemoteAddr(), new_owner_address)
-
-			transaction_hash := getTransactionHash(string(msg))
-			fmt.Printf("%s Transaction Hash: %s\n", conn.RemoteAddr(), transaction_hash)
-
-			block_number := getblockNumber(string(msg))
-			fmt.Printf("%s Block number: %s\n", conn.RemoteAddr(), block_number)
-
-			now := time.Now() // current local time
-			sec := now.Unix()
-
-			o := owner{
-				new_owner_address: new_owner_address,
-				transaction_hash:  transaction_hash,
-				block_number:      block_number,
-				timestamp:         sec,
-			}
-			err = insert(db, o)
-			if err != nil {
-				log.Printf("Insert owner failed with error %s", err)
-				return
-			}
+	for {
+		select {
+		case err := <-sub.Err():
+			log.Fatal(err)
+		case vLog := <-channel:
+			log.Println(vLog)
+			handleEvent(vLog)
 		}
-	})
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "index.html")
-	})
-
-	http.ListenAndServe(":8080", nil)
+	}
 }
 
-func getnewOwnerAddress(address string) string {
-	first := strings.Index(address, "newOwnerAdd") + 11
-	last := len(address)
-	return address[first:last]
-}
-func getTransactionHash(address string) string {
-	first := strings.Index(address, "transactionHash") + 15
-	last := strings.Index(address, "newOwnerAdd")
-	return address[first:last]
-}
+func main() {
 
-func getblockNumber(address string) string {
-	first := strings.Index(address, "blockNumber") + 11
-	last := strings.Index(address, "transactionHash")
-	return address[first:last]
+	// stmt, _ := db.Prepare(`
+	// 	CREATE TABLE IF NOT EXISTS "Owner" (
+	// 		"new_owner_address"	TEXT,
+	// 		"timestamp"	INTEGER,
+	// 		"transaction_hash"	TEXT,
+	// 		"block_number"	TEXT,
+	// 		"id"	INTEGER NOT NULL,
+	// 		PRIMARY KEY("id" AUTOINCREMENT)
+	// 	);
+	// `)
+	// stmt.Exec()
+
+	// http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	// 	http.ServeFile(w, r, "index.html")
+	// })
+
+	// http.ListenAndServe(":8080", nil)
+
+	Init()
+
 }
 
 func insert(db *sql.DB, o owner) error {
